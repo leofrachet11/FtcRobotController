@@ -33,7 +33,10 @@ public class MainTeleOp extends LinearOpMode {
     private final double ARM_UP = 1.0;
 
     private int currentSlotIndex = 0;
-    private int pipeline = 0; // 0 = Green, 1 = Purple, 2 = AprilTag
+    
+    // Intake toggle state
+    private boolean isIntakeOn = false;
+    private boolean lastRightBumper = false;
 
     @Override
     public void runOpMode() {
@@ -49,63 +52,49 @@ public class MainTeleOp extends LinearOpMode {
         intakeMotor = hardwareMap.get(DcMotor.class, "intakeMotor");
         
         spindexerServo = hardwareMap.get(Servo.class, "spindexerServo");
-        armServo = hardwareMap.get(Servo.class, "armLeft"); 
+        armServo = hardwareMap.get(Servo.class, "armServo");
+
+        setServoRange(spindexerServo);
+        setServoRange(armServo);
 
         frontLeft.setDirection(DcMotor.Direction.REVERSE);
-        backLeft.setDirection(DcMotor.Direction.FORWARD);
-        frontRight.setDirection(DcMotor.Direction.FORWARD);
-        backRight.setDirection(DcMotor.Direction.FORWARD);
-
-        shooterWheelLeft.setDirection(DcMotor.Direction.FORWARD);
         shooterWheelRight.setDirection(DcMotor.Direction.REVERSE);
         
         // Intake is reversed so positive power pulls balls IN
         intakeMotor.setDirection(DcMotor.Direction.REVERSE);
 
-        // PRELOADS: Setup the brain to assume Purple, Purple, Green
+        // PRELOADS: Setup the brain to assume 3 balls are loaded. Color doesn't matter anymore.
         spindexer.setPreloads(
             SpindexerBrain.BallColor.PURPLE,
             SpindexerBrain.BallColor.PURPLE,
-            SpindexerBrain.BallColor.GREEN
+            SpindexerBrain.BallColor.PURPLE
         );
         
-        // Ensure starting slot is 0, since it is already full, 
-        // we will shoot first to empty it, or manually override it.
         currentSlotIndex = 0;
+        spindexerServo.setPosition(INTAKE_POS[currentSlotIndex]);
 
         limelight.start();
         armServo.setPosition(ARM_DOWN); 
 
         telemetry.addLine("Initialized.");
-        telemetry.addLine("PRELOADS SET: [PURPLE] [PURPLE] [GREEN]");
+        telemetry.addLine("PRELOADS SET: [FULL] [FULL] [FULL]");
         telemetry.addData("Limelight Connected", limelight.isConnected());
         telemetry.update();
 
         waitForStart();
 
         while (opModeIsActive()) {
-            // --- 1. PIPELINE SWITCHING (B Button) ---
-            if (gamepad1.b) {
-                pipeline = (pipeline + 1) % 3;
-                limelight.pipelineSwitch(pipeline);
-                sleep(250);
-            }
-
-            // --- 2. DRIVER CONTROLS ---
+            // --- 1. DRIVER CONTROLS ---
             double drive = -gamepad1.left_stick_y;
             double strafe = gamepad1.left_stick_x;
             double turn = gamepad1.right_stick_x;
 
-            // --- 3. LIMELIGHT AUTO-ALIGN (Left Bumper) ---
+            // --- 2. LIMELIGHT AUTO-ALIGN (Left Bumper) ---
+            // Assuming your Limelight is now configured by default to track AprilTags
             LLResult result = limelight.getLatestResult();
             if (gamepad1.left_bumper && result != null && result.isValid()) {
                 turn = result.getTx() * KP_TURN;
-                
-                if (pipeline == 2) {
-                    drive = -gamepad1.left_stick_y; 
-                } else {
-                    drive = (TARGET_AREA - result.getTa()) * KP_DRIVE;
-                }
+                drive = -gamepad1.left_stick_y; // Keep manual forward/back drive
             }
 
             frontLeft.setPower(drive + strafe + turn);
@@ -113,31 +102,33 @@ public class MainTeleOp extends LinearOpMode {
             backLeft.setPower(drive - strafe + turn);
             backRight.setPower(drive + strafe - turn);
 
-            // --- 4. INTAKE MOTOR LOGIC (ALWAYS ON) ---
-            // Reverses on Right Trigger, stops on Right Bumper, otherwise always runs IN.
+            // --- 3. INTAKE MOTOR LOGIC (TOGGLE) ---
+            boolean currentRightBumper = gamepad1.right_bumper;
+            if (currentRightBumper && !lastRightBumper) {
+                isIntakeOn = !isIntakeOn; // Toggle state
+            }
+            lastRightBumper = currentRightBumper;
+
             if (gamepad1.right_trigger > 0.1) {
-                intakeMotor.setPower(-1.0); // Reverse to spit out
-            } else if (gamepad1.right_bumper) {
-                intakeMotor.setPower(0); // Optional: Panic stop
+                intakeMotor.setPower(-1.0); // Reverse to un-jam or spit out
+            } else if (isIntakeOn) {
+                intakeMotor.setPower(1.0);  // Runs if toggled ON
             } else {
-                intakeMotor.setPower(1.0); // ALWAYS ON default
+                intakeMotor.setPower(0.0);  // Off otherwise
             }
 
-            // --- 5. RECORD INTAKE (D-Pad) ---
-            if (gamepad1.dpad_up || gamepad1.dpad_down) {
-                SpindexerBrain.BallColor color = gamepad1.dpad_up ? SpindexerBrain.BallColor.GREEN : SpindexerBrain.BallColor.PURPLE;
-                spindexer.recordIntake(color);
-                
+            // --- 4. RECORD INTAKE (Button A) ---
+            if (gamepad1.a) {
+                // Log a generic ball and move to next slot
+                spindexer.recordIntake(SpindexerBrain.BallColor.GREEN);
                 currentSlotIndex = (currentSlotIndex + 1) % 3;
                 spindexerServo.setPosition(INTAKE_POS[currentSlotIndex]);
-                sleep(300);
+                sleep(300); // Debounce
             }
 
-            // --- 6. SHOOT LOGIC (A=Green, X=Purple) ---
-            if (gamepad1.a || gamepad1.x) {
-                SpindexerBrain.BallColor target = gamepad1.a ? SpindexerBrain.BallColor.GREEN : SpindexerBrain.BallColor.PURPLE;
-                int slot = spindexer.getBestSlotToShoot(target);
-
+            // --- 5. SHOOT ONE (Button B) ---
+            if (gamepad1.b) {
+                int slot = spindexer.getAnyFilledSlot();
                 if (slot != -1) {
                     shooterWheelLeft.setPower(SHOOTER_POWER);
                     shooterWheelRight.setPower(SHOOTER_POWER);
@@ -157,56 +148,58 @@ public class MainTeleOp extends LinearOpMode {
                     spindexerServo.setPosition(INTAKE_POS[currentSlotIndex]);
                 }
             }
-            
-            // --- 7. CO-PILOT OVERRIDES (GAMEPAD 2) ---
-            // If the brain gets confused, the second controller can manually force slot colors
-            if (gamepad2.a) {
-                spindexer.forceSetSlot(currentSlotIndex, SpindexerBrain.BallColor.GREEN);
-                sleep(200);
-            } else if (gamepad2.x) {
-                spindexer.forceSetSlot(currentSlotIndex, SpindexerBrain.BallColor.PURPLE);
-                sleep(200);
-            } else if (gamepad2.b) {
-                spindexer.forceSetSlot(currentSlotIndex, SpindexerBrain.BallColor.NONE); // Clear slot
-                sleep(200);
-            }
 
-            // Manually rotate spindexer to next or previous slot (without recording intake)
-            if (gamepad2.dpad_right) {
-                currentSlotIndex = (currentSlotIndex + 1) % 3;
+            // --- 6. SHOOT ALL RAPID-FIRE (Button X) ---
+            if (gamepad1.x) {
+                // Spin up wheels ONCE for all balls
+                shooterWheelLeft.setPower(SHOOTER_POWER);
+                shooterWheelRight.setPower(SHOOTER_POWER);
+                sleep(500); // Wait for spin-up
+
+                // Loop through every slot and shoot if it has a ball
+                for (int i = 0; i < 3; i++) {
+                    if (spindexer.getSlotContent(i) != SpindexerBrain.BallColor.NONE) {
+                        spindexerServo.setPosition(SHOOTER_POS[i]);
+                        sleep(600); // Wait for spindexer to arrive
+
+                        armServo.setPosition(ARM_UP);
+                        sleep(600);
+                        armServo.setPosition(ARM_DOWN);
+                        sleep(400);
+
+                        spindexer.clearSlot(i);
+                    }
+                }
+
+                // Spin down wheels and return home
+                shooterWheelLeft.setPower(0);
+                shooterWheelRight.setPower(0);
                 spindexerServo.setPosition(INTAKE_POS[currentSlotIndex]);
-                sleep(250);
-            } else if (gamepad2.dpad_left) {
-                currentSlotIndex = (currentSlotIndex + 2) % 3; // +2 modulo 3 is equivalent to -1
-                spindexerServo.setPosition(INTAKE_POS[currentSlotIndex]);
-                sleep(250);
             }
             
             // --- TELEMETRY ---
-            String pipeName = (pipeline == 0) ? "GREEN" : (pipeline == 1) ? "PURPLE" : "APRILTAG";
-            
-            telemetry.addData("Limelight", limelight.isConnected() ? "ONLINE" : "OFFLINE");
-            telemetry.addData("Pipeline", "%d: %s", pipeline, pipeName);
-            
             telemetry.addLine("\n--- Spindexer Status ---");
-            telemetry.addData("Slot 0", spindexer.getSlotContent(0));
-            telemetry.addData("Slot 1", spindexer.getSlotContent(1));
-            telemetry.addData("Slot 2", spindexer.getSlotContent(2));
-            telemetry.addData("Active Slot (Gamepad 2 Controls)", currentSlotIndex);
+            telemetry.addData("Slot 0", spindexer.getSlotContent(0) != SpindexerBrain.BallColor.NONE ? "FULL" : "EMPTY");
+            telemetry.addData("Slot 1", spindexer.getSlotContent(1) != SpindexerBrain.BallColor.NONE ? "FULL" : "EMPTY");
+            telemetry.addData("Slot 2", spindexer.getSlotContent(2) != SpindexerBrain.BallColor.NONE ? "FULL" : "EMPTY");
+            telemetry.addData("Current Intake Slot", currentSlotIndex);
             
-            telemetry.addLine("\n--- Driver Controls ---");
-            telemetry.addLine("Hold L-Bumper: Vision Auto-Align");
-            telemetry.addLine("Hold R-Trigger: REVERSE Intake | R-Bumper: STOP Intake");
-            telemetry.addLine("D-Pad UP/DOWN: Log Green/Purple");
-            telemetry.addLine("A/X Button: Shoot Green/Purple");
-
-            telemetry.addLine("\n--- Gamepad 2 Overrides ---");
-            telemetry.addLine("A: Force Active Slot to GREEN");
-            telemetry.addLine("X: Force Active Slot to PURPLE");
-            telemetry.addLine("B: Force Active Slot EMPTY");
-            telemetry.addLine("D-Pad L/R: Manually rotate Spindexer");
+            telemetry.addLine("\n--- RAPID FIRE CONTROLS ---");
+            telemetry.addLine("Drive: L/R Sticks");
+//            telemetry.addLine("Hold L-Bumper: AprilTag Auto-Align");
+            telemetry.addLine("R-Bumper: TOGGLE Intake On/Off");
+            telemetry.addLine("Hold R-Trigger: REVERSE Intake to Unjam");
+            telemetry.addLine("A Button: Log Pickup");
+            telemetry.addLine("B Button: Shoot 1 Ball");
+            telemetry.addLine("X Button: SHOOT ALL BALLS (RAPID FIRE)");
             
             telemetry.update();
+        }
+    }
+
+    private void setServoRange(Servo s) {
+        if (s.getController() instanceof ServoControllerEx) {
+            ((ServoControllerEx) s.getController()).setServoPwmRange(s.getPortNumber(), new PwmControl.PwmRange(500, 2500));
         }
     }
 }

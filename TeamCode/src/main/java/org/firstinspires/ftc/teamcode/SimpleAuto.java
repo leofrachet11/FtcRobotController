@@ -19,8 +19,8 @@ public class SimpleAuto extends LinearOpMode {
 
         // Set directions EXACTLY as they are in TeleOp
         frontLeft.setDirection(DcMotor.Direction.REVERSE);
-        frontRight.setDirection(DcMotor.Direction.FORWARD);
         backLeft.setDirection(DcMotor.Direction.FORWARD);
+        frontRight.setDirection(DcMotor.Direction.FORWARD);
         backRight.setDirection(DcMotor.Direction.FORWARD);
 
         telemetry.addLine("Ready to run Simple Auto.");

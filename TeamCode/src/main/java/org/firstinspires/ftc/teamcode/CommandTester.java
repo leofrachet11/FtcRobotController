@@ -27,7 +27,7 @@ public class CommandTester extends LinearOpMode {
         shooterWheelLeft = hardwareMap.get(DcMotor.class, "shooterWheelLeft");
         shooterWheelRight = hardwareMap.get(DcMotor.class, "shooterWheelRight");
         spindexerServo = hardwareMap.get(Servo.class, "spindexerServo");
-        armServo = hardwareMap.get(Servo.class, "armLeft");
+        armServo = hardwareMap.get(Servo.class, "armServo");
 
         setServoRange(spindexerServo);
         setServoRange(armServo);
