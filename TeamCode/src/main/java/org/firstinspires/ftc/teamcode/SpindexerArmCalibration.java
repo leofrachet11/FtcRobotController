@@ -6,8 +6,8 @@ import com.qualcomm.robotcore.hardware.PwmControl;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.ServoControllerEx;
 
-@TeleOp(name="Calibration: Final System", group="Calibration")
-public class HardwareCalibration extends LinearOpMode {
+@TeleOp(name="Spindexer/arm Calibration", group="Calibration")
+public class SpindexerArmCalibration extends LinearOpMode {
 
     private Servo spindexerServo, armServo;
     private double spinPos = 0.02;
